@@ -1,27 +1,18 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Ingredient, Sale, PredictionResult, Product, TaxEntry } from "../types";
 
-// Inicialización perezosa robusta
-const getAIClient = () => {
-  try {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey || apiKey === '' || apiKey === 'undefined') {
-      return null;
-    }
-    return new GoogleGenAI({ apiKey });
-  } catch (e) {
-    console.warn("Error al inicializar GoogleGenAI:", e);
-    return null;
-  }
-};
-
 export const getInventoryPredictions = async (
   ingredients: Ingredient[],
   sales: Sale[],
   products: Product[]
 ): Promise<PredictionResult[]> => {
-  const ai = getAIClient();
-  if (!ai) return [];
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey === '' || apiKey === 'undefined') {
+    console.warn("Gemini API Key no configurada. Las predicciones automáticas están desactivadas.");
+    return [];
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
 
   const context = {
     negocio: "Cafetería Local en España",
@@ -43,18 +34,12 @@ export const getInventoryPredictions = async (
     }))
   };
 
-  const systemInstruction = `
-    Actúa como un experto en control de gestión y logística para hostelería española. 
-    Analiza los datos para predecir roturas de stock y sugerir pedidos óptimos.
-    Devuelve la respuesta estrictamente en JSON.
-  `;
-
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Datos del negocio: ${JSON.stringify(context)}`,
+      contents: `Analiza este inventario y predice faltas: ${JSON.stringify(context)}`,
       config: {
-        systemInstruction,
+        systemInstruction: "Actúa como experto en logística de hostelería española. Devuelve JSON.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -72,23 +57,23 @@ export const getInventoryPredictions = async (
         }
       }
     });
-    return JSON.parse(response.text);
+    
+    const text = response.text;
+    return text ? JSON.parse(text) : [];
   } catch (e) {
-    console.error("AI Prediction Error:", e);
+    console.error("Error en predicción IA:", e);
     return [];
   }
 };
 
 export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEntry>> => {
-  const ai = getAIClient();
-  if (!ai) return {};
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey === '' || apiKey === 'undefined') {
+    console.warn("Gemini API Key no configurada. El escáner de facturas está desactivado.");
+    return {};
+  }
 
-  const systemInstruction = `
-    Eres un experto contable español. Analiza la imagen de la factura/ticket.
-    Extrae: Concepto (Nombre del proveedor), Base Imponible, Tipo de IVA (en decimal, ej: 0.21), y Total.
-    Si no encuentras el IVA, asume 0.21.
-    Responde estrictamente en JSON.
-  `;
+  const ai = new GoogleGenAI({ apiKey });
 
   const imagePart = {
     inlineData: {
@@ -100,9 +85,8 @@ export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEn
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: { parts: [imagePart, { text: "Extrae los datos fiscales de este ticket español." }] },
+      contents: { parts: [imagePart, { text: "Extrae: concepto, base, taxRate (decimal), total en JSON." }] },
       config: {
-        systemInstruction,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -116,9 +100,11 @@ export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEn
         }
       }
     });
-    return JSON.parse(response.text);
+    
+    const text = response.text;
+    return text ? JSON.parse(text) : {};
   } catch (e) {
-    console.error("Error OCR Gemini:", e);
+    console.error("Error en análisis de ticket IA:", e);
     return {};
   }
 };
