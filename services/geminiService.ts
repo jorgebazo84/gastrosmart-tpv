@@ -1,15 +1,18 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { Ingredient, Sale, PredictionResult, Product, TaxEntry } from "../types";
 
-// Inicialización perezosa para evitar errores en el arranque si la API_KEY no existe
+// Inicialización perezosa robusta
 const getAIClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey || apiKey === 'undefined') {
-    console.warn("Gemini API_KEY is missing. AI features will be disabled.");
+  try {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey || apiKey === '' || apiKey === 'undefined') {
+      return null;
+    }
+    return new GoogleGenAI({ apiKey });
+  } catch (e) {
+    console.warn("Error al inicializar GoogleGenAI:", e);
     return null;
   }
-  return new GoogleGenAI({ apiKey });
 };
 
 export const getInventoryPredictions = async (
