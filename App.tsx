@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, useParams, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
@@ -46,7 +45,7 @@ const ConfigDiagnostics: React.FC<{ missingKeys: string[] }> = ({ missingKeys })
         </p>
         <ol className="list-decimal list-inside space-y-1 opacity-80">
           <li>Ve al panel de Vercel</li>
-          <li>Settings > Environment Variables</li>
+          <li>Settings &gt; Environment Variables</li>
           <li>Añade las llaves faltantes</li>
           <li>Haz un nuevo "Redeploy"</li>
         </ol>
