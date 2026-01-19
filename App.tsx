@@ -6,24 +6,60 @@ import POS from './components/POS';
 import TableManager from './components/TableManager';
 import InventoryManager from './components/InventoryManager';
 import AIAnalytics from './components/AIAnalytics';
-import SecurityCamera from './components/SecurityCamera';
-import Portfolio from './components/Portfolio';
 import LandingPage from './components/LandingPage';
-import WasteManager from './components/WasteManager';
 import TenantAdmin from './components/TenantAdmin';
 import Dashboard from './components/Dashboard';
 import UserManual from './components/UserManual';
-import MobileView from './components/MobileView';
-import UserManager from './components/UserManager';
-import SalesHistory from './components/SalesHistory';
 import { supabase, db } from './services/supabaseClient';
+import { AlertCircle, Terminal, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { 
   INITIAL_INGREDIENTS, 
   INITIAL_PRODUCTS, 
   INITIAL_TABLES,
   INITIAL_USERS 
 } from './constants';
-import { Sale, Ingredient, Table, User, Product, ProductRecipe, WasteEntry, Tenant, Supplier, Shift, SecurityEvent, TableLog, TaxEntry } from './types';
+import { Sale, Ingredient, Table, User, Product, WasteEntry, Tenant, Shift, TaxEntry } from './types';
+
+const ConfigDiagnostics: React.FC<{ missingKeys: string[] }> = ({ missingKeys }) => (
+  <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
+    <div className="max-w-md w-full bg-gray-900 border border-gray-800 rounded-[2.5rem] p-10 shadow-2xl space-y-8 animate-in zoom-in duration-500">
+      <div className="w-16 h-16 bg-red-500/20 text-red-500 rounded-2xl flex items-center justify-center mx-auto">
+        <ShieldAlert size={32} />
+      </div>
+      <div className="text-center space-y-2">
+        <h2 className="text-2xl font-black text-white uppercase tracking-tight">Configuración Incompleta</h2>
+        <p className="text-gray-400 text-sm">Tu aplicación en Vercel no tiene acceso a los servicios externos.</p>
+      </div>
+      <div className="bg-black/50 rounded-2xl p-6 space-y-4 border border-gray-800">
+        <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Faltan las siguientes variables:</p>
+        <ul className="space-y-2">
+          {missingKeys.map(key => (
+            <li key={key} className="flex items-center gap-2 text-red-400 text-xs font-mono">
+              <AlertCircle size={14} /> {key}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="text-gray-500 text-xs space-y-3 bg-gray-800/30 p-4 rounded-xl">
+        <p className="font-bold text-gray-400 flex items-center gap-2">
+          <Terminal size={14} /> Instrucciones:
+        </p>
+        <ol className="list-decimal list-inside space-y-1 opacity-80">
+          <li>Ve al panel de Vercel</li>
+          <li>Settings > Environment Variables</li>
+          <li>Añade las llaves faltantes</li>
+          <li>Haz un nuevo "Redeploy"</li>
+        </ol>
+      </div>
+      <button 
+        onClick={() => window.location.reload()}
+        className="w-full py-4 bg-orange-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-orange-700 transition-all shadow-xl shadow-orange-900/20"
+      >
+        Hecho, Reintentar Conexión
+      </button>
+    </div>
+  </div>
+);
 
 const TPVMain: React.FC = () => {
   const { tenantId } = useParams<{ tenantId: string }>();
@@ -31,7 +67,6 @@ const TPVMain: React.FC = () => {
   const [ingredients, setIngredients] = useState<Ingredient[]>(INITIAL_INGREDIENTS);
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [sales, setSales] = useState<Sale[]>([]);
-  const [wastes, setWastes] = useState<WasteEntry[]>([]);
   const [tables, setTables] = useState<Table[]>(INITIAL_TABLES);
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [activeUser, setActiveUser] = useState<User>(INITIAL_USERS[0]);
@@ -41,31 +76,10 @@ const TPVMain: React.FC = () => {
   const [dbConnected, setDbConnected] = useState(false);
   
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
-  const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
 
-  const [currentTenant, setCurrentTenant] = useState<Tenant>({
-    id: tenantId || 'demo',
-    name: (tenantId || 'Demo Cafe').replace('-', ' ').toUpperCase(),
-    slug: tenantId || 'demo',
-    primaryColor: '#ea580c',
-    secondaryColor: '#111827',
-    nif: 'B12345678',
-    address: 'Calle Mayor 1, Madrid',
-    email: 'contacto@demo.es',
-    phone: '912 345 678',
-    taxRegime: 'Estimación Directa',
-    defaultIvaRate: 0.10,
-    irpfRate: 0.20,
-    ticketHeader: '¡Bienvenidos!',
-    ticketFooter: 'Gracias por su visita',
-    showTaxBreakdown: true
-  });
-
-  // CARGAR DATOS DE SUPABASE AL INICIAR
   useEffect(() => {
     const loadCloudData = async () => {
       if (!supabase) {
-        console.log("Database keys not found. Running in Local Mode.");
         setIsLoading(false);
         setDbConnected(false);
         return;
@@ -86,7 +100,7 @@ const TPVMain: React.FC = () => {
         
         setDbConnected(true);
       } catch (error) {
-        console.error("Error cargando datos de Supabase:", error);
+        console.error("Supabase load error:", error);
         setDbConnected(false);
       } finally {
         setIsLoading(false);
@@ -118,7 +132,6 @@ const TPVMain: React.FC = () => {
     setSales(prev => [...prev, saleWithContext]);
     if (dbConnected) await db.saveSale(saleWithContext);
     
-    // Actualizar stock
     const updatedIngredients = [...ingredients];
     for (const saleItem of newSale.items) {
       const product = products.find(p => p.id === saleItem.productId);
@@ -146,24 +159,25 @@ const TPVMain: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-gray-900 text-white gap-6">
+      <div className="h-screen flex flex-col items-center justify-center bg-gray-950 text-white gap-6">
         <div className="w-16 h-16 border-4 border-orange-600 border-t-transparent rounded-full animate-spin"></div>
         <p className="font-black uppercase tracking-widest text-sm animate-pulse">Sincronizando con la nube...</p>
       </div>
     );
   }
 
+  // Verificación de configuración crítica
+  const missingKeys = [];
+  if (!process.env.API_KEY || process.env.API_KEY === '') missingKeys.push('API_KEY');
+  if (!process.env.SUPABASE_URL || process.env.SUPABASE_URL === '') missingKeys.push('SUPABASE_URL');
+  if (!process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY === '') missingKeys.push('SUPABASE_ANON_KEY');
+
+  if (missingKeys.length > 0) {
+    return <ConfigDiagnostics missingKeys={missingKeys} />;
+  }
+
   return (
     <div className="flex min-h-screen bg-gray-50 flex-col">
-      {/* Banner de aviso de modo local si no hay DB */}
-      {!dbConnected && !isLoading && (
-        <div className="bg-blue-600 text-white text-[10px] font-black uppercase py-2 px-4 flex justify-center gap-4 tracking-widest no-print">
-          <span>⚠️ MODO DEMO LOCAL ACTIVO</span>
-          <span className="opacity-60">-</span>
-          <span>Configura SUPABASE_URL y SUPABASE_ANON_KEY en Vercel para persistencia real</span>
-        </div>
-      )}
-
       <div className="flex flex-1">
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
         <main className="flex-1 p-8 overflow-y-auto">
@@ -215,7 +229,7 @@ const TPVMain: React.FC = () => {
         </main>
       </div>
       <footer className="bg-gray-900 text-gray-500 py-4 px-8 text-[10px] font-bold uppercase tracking-[0.2em] flex justify-between items-center border-t border-white/5 no-print">
-         <div>GASTROSMART {dbConnected ? 'CLOUD SYNC' : 'LOCAL MODE'} v3.0</div>
+         <div>GASTROSMART CLOUD v3.0</div>
          <div className="flex items-center gap-2">© 2025 EWOLA TECH</div>
       </footer>
     </div>

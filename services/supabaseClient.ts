@@ -1,91 +1,50 @@
-
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+// En Vite se usa import.meta.env o process.env si se configura en vite.config
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
 
-// Inicialización segura: solo creamos el cliente si las credenciales existen
+// Solo creamos el cliente si tenemos las credenciales
 export const supabase = (supabaseUrl && supabaseAnonKey) 
   ? createClient(supabaseUrl, supabaseAnonKey) 
   : null;
 
-// Funciones de ayuda con manejo de errores y modo offline
 export const db = {
   async getIngredients() {
     if (!supabase) return null;
-    try {
-      const { data, error } = await supabase.from('ingredients').select('*');
-      if (error) throw error;
-      return data;
-    } catch (e) {
-      console.warn("Supabase Error (Ingredients):", e);
-      return null;
-    }
+    const { data, error } = await supabase.from('ingredients').select('*').order('name');
+    if (error) return null;
+    return data;
   },
-
   async updateIngredient(ing: any) {
     if (!supabase) return;
-    try {
-      const { error } = await supabase.from('ingredients').upsert(ing);
-      if (error) throw error;
-    } catch (e) {
-      console.error("Supabase Sync Error (Update Ingredient):", e);
-    }
+    await supabase.from('ingredients').upsert(ing);
   },
-
   async getProducts() {
     if (!supabase) return null;
-    try {
-      const { data, error } = await supabase.from('products').select('*');
-      if (error) throw error;
-      return data;
-    } catch (e) {
-      console.warn("Supabase Error (Products):", e);
-      return null;
-    }
+    const { data, error } = await supabase.from('products').select('*').order('category');
+    if (error) return null;
+    return data;
   },
-
   async saveSale(sale: any) {
     if (!supabase) return;
-    try {
-      const { error } = await supabase.from('sales').insert(sale);
-      if (error) throw error;
-    } catch (e) {
-      console.error("Supabase Sync Error (Save Sale):", e);
-    }
+    const { error } = await supabase.from('sales').insert(sale);
+    if (error) console.error("Error saving sale:", error);
   },
-
   async getSales() {
     if (!supabase) return null;
-    try {
-      const { data, error } = await supabase.from('sales').select('*');
-      if (error) throw error;
-      return data;
-    } catch (e) {
-      console.warn("Supabase Error (Sales):", e);
-      return null;
-    }
+    const { data, error } = await supabase.from('sales').select('*').order('timestamp', { ascending: false });
+    if (error) return null;
+    return data;
   },
-
   async saveTaxEntry(entry: any) {
     if (!supabase) return;
-    try {
-      const { error } = await supabase.from('tax_entries').insert(entry);
-      if (error) throw error;
-    } catch (e) {
-      console.error("Supabase Sync Error (Save Tax):", e);
-    }
+    await supabase.from('tax_entries').insert(entry);
   },
-
   async getTaxEntries() {
     if (!supabase) return null;
-    try {
-      const { data, error } = await supabase.from('tax_entries').select('*');
-      if (error) throw error;
-      return data;
-    } catch (e) {
-      console.warn("Supabase Error (Tax Entries):", e);
-      return null;
-    }
+    const { data, error } = await supabase.from('tax_entries').select('*').order('date', { ascending: false });
+    if (error) return null;
+    return data;
   }
 };
