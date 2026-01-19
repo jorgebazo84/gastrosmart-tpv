@@ -1,0 +1,7 @@
+{
+  "name": "TPV Cafetería Smart AI",
+  "description": "Sistema de gestión integral para cafeterías con control de inventario por recetas, predicción de compras mediante IA y vigilancia de caja con reconocimiento de efectivo.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
