@@ -16,6 +16,7 @@ import UserManual from './components/UserManual';
 import MobileView from './components/MobileView';
 import UserManager from './components/UserManager';
 import SalesHistory from './components/SalesHistory';
+import { supabase, db } from './services/supabaseClient';
 import { 
   INITIAL_INGREDIENTS, 
   INITIAL_PRODUCTS, 
@@ -35,11 +36,9 @@ const TPVMain: React.FC = () => {
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [activeUser, setActiveUser] = useState<User>(INITIAL_USERS[0]);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
-  const [tableLogs, setTableLogs] = useState<TableLog[]>([]);
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [manualEntries, setManualEntries] = useState<TaxEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [dbConnected, setDbConnected] = useState(false);
   
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
   const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
@@ -62,19 +61,44 @@ const TPVMain: React.FC = () => {
     showTaxBreakdown: true
   });
 
+  // CARGAR DATOS DE SUPABASE AL INICIAR
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const loadCloudData = async () => {
+      if (!supabase) {
+        console.log("Database keys not found. Running in Local Mode.");
+        setIsLoading(false);
+        setDbConnected(false);
+        return;
+      }
+
+      try {
+        const [cloudIngs, cloudProds, cloudSales, cloudTax] = await Promise.all([
+          db.getIngredients(),
+          db.getProducts(),
+          db.getSales(),
+          db.getTaxEntries()
+        ]);
+
+        if (cloudIngs) setIngredients(cloudIngs);
+        if (cloudProds) setProducts(cloudProds);
+        if (cloudSales) setSales(cloudSales);
+        if (cloudTax) setManualEntries(cloudTax);
+        
+        setDbConnected(true);
+      } catch (error) {
+        console.error("Error cargando datos de Supabase:", error);
+        setDbConnected(false);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadCloudData();
   }, []);
 
-  useEffect(() => {
-    document.documentElement.style.setProperty('--primary-brand', currentTenant.primaryColor);
-    document.documentElement.style.setProperty('--secondary-brand', currentTenant.secondaryColor);
-  }, [currentTenant]);
-
-  const handleRegisterExpense = (expense: TaxEntry) => {
+  const handleRegisterExpense = async (expense: TaxEntry) => {
     setManualEntries(prev => [...prev, expense]);
+    if (dbConnected) await db.saveTaxEntry(expense);
+    
     if (activeShift && expense.isCashOut) {
       setActiveShift(prev => prev ? {
         ...prev,
@@ -83,115 +107,63 @@ const TPVMain: React.FC = () => {
     }
   };
 
-  const handleUpdateExpenseDocument = (expenseId: string, url: string) => {
-    setManualEntries(prev => prev.map(e => e.id === expenseId ? { ...e, attachmentUrl: url } : e));
-  };
-
-  const handleRegisterWaste = (entry: WasteEntry) => {
-    setWastes(prev => [...prev, entry]);
-    
-    // Descontar del stock de ingredientes
-    const product = products.find(p => p.id === entry.productId);
-    if (product) {
-      setIngredients(prevIngs => {
-        const updatedIngs = [...prevIngs];
-        product.recipe.forEach(recipeItem => {
-          const ingIndex = updatedIngs.findIndex(i => i.id === recipeItem.ingredientId);
-          if (ingIndex > -1) {
-            updatedIngs[ingIndex].stock -= (recipeItem.quantity * entry.quantity);
-          }
-        });
-        return updatedIngs;
-      });
-    }
-  };
-
-  const handleSaleComplete = (newSale: Sale) => {
+  const handleSaleComplete = async (newSale: Sale) => {
     const saleWithContext = { 
       ...newSale, 
       tenantId: tenantId || 'demo', 
       timestamp: new Date().toISOString(),
-      shiftId: activeShift?.id // Vinculamos la venta al turno activo
+      shiftId: activeShift?.id
     };
-    setSales(prev => [...prev, saleWithContext]);
     
-    if (activeShift) {
-      setActiveShift(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          totalSales: prev.totalSales + saleWithContext.total,
-          totalCard: (saleWithContext.paymentMethod === 'Tarjeta' || saleWithContext.paymentMethod === 'Datáfono') ? prev.totalCard + saleWithContext.total : prev.totalCard,
-          totalCashSales: (saleWithContext.paymentMethod === 'Efectivo' || saleWithContext.paymentMethod === 'CashGuard') ? prev.totalCashSales + saleWithContext.total : prev.totalCashSales,
-        };
-      });
+    setSales(prev => [...prev, saleWithContext]);
+    if (dbConnected) await db.saveSale(saleWithContext);
+    
+    // Actualizar stock
+    const updatedIngredients = [...ingredients];
+    for (const saleItem of newSale.items) {
+      const product = products.find(p => p.id === saleItem.productId);
+      if (product) {
+        for (const recipeItem of product.recipe) {
+          const ingIndex = updatedIngredients.findIndex(i => i.id === recipeItem.ingredientId);
+          if (ingIndex !== -1) {
+            const ing = updatedIngredients[ingIndex];
+            const newStock = ing.stock - (recipeItem.quantity * saleItem.quantity);
+            updatedIngredients[ingIndex] = { ...ing, stock: newStock };
+            if (dbConnected) await db.updateIngredient({ ...ing, stock: newStock });
+          }
+        }
+      }
     }
+    setIngredients(updatedIngredients);
 
     if (newSale.tableId) {
       setTables(prev => prev.map(t => t.id === newSale.tableId ? { ...t, status: 'libre', currentOrder: [], tempName: undefined } : t));
     }
     
-    newSale.items.forEach((saleItem: any) => {
-      setIngredients(prevIngs => {
-        const updatedIngs = [...prevIngs];
-        const product = products.find(p => p.id === saleItem.productId);
-        product?.recipe.forEach(recipeItem => {
-          const ingIndex = updatedIngs.findIndex(i => i.id === recipeItem.ingredientId);
-          if (ingIndex > -1) updatedIngs[ingIndex].stock -= (recipeItem.quantity * saleItem.quantity);
-        });
-        if (saleItem.mixerId && saleItem.mixerId !== 'manual') {
-          const mIndex = updatedIngs.findIndex(i => i.id === saleItem.mixerId);
-          if (mIndex > -1) updatedIngs[mIndex].stock -= saleItem.quantity;
-        }
-        return updatedIngs;
-      });
-    });
-
     setSelectedTable(null);
-    if (!isMobile) setActiveTab('tables');
+    setActiveTab('tables');
   };
 
-  const startShift = (base: number) => {
-    setActiveShift({
-      id: Math.random().toString(36).substr(2, 9),
-      startTime: new Date().toISOString(),
-      initialBase: base,
-      totalSales: 0,
-      totalCard: 0,
-      totalCashSales: 0,
-      totalExpenses: 0,
-      status: 'abierto',
-      userId: activeUser.id
-    });
-  };
-
-  const endShift = (finalCash: number, relevantEvents: SecurityEvent[]) => {
-    if (activeShift) {
-      const expectedCash = activeShift.initialBase + activeShift.totalCashSales - activeShift.totalExpenses;
-      const closedShift: Shift = { ...activeShift, endTime: new Date().toISOString(), finalCash, expectedCash, status: 'cerrado', discrepancyEvents: relevantEvents };
-      setShiftHistory(prev => [...prev, closedShift]);
-      setActiveShift(null);
-      alert(`Turno Cerrado. Resultado: ${finalCash - expectedCash === 0 ? 'Cuadrado' : 'Descuadre de ' + (finalCash - expectedCash).toFixed(2) + '€'}`);
-    }
-  };
-
-  if (isMobile) {
+  if (isLoading) {
     return (
-      <MobileView 
-        tables={tables}
-        activeUser={activeUser}
-        onSaleComplete={handleSaleComplete}
-        onSaveOrder={(id, cart) => setTables(prev => prev.map(t => t.id === id ? { ...t, currentOrder: cart, status: 'ocupada' } : t))}
-        onOpenTable={(id, name) => setTables(prev => prev.map(t => t.id === id ? { ...t, status: 'ocupada', tempName: name, currentOrder: [] } : t))}
-        onRegisterExpense={handleRegisterExpense}
-        isShiftOpen={!!activeShift}
-        onNavigateToDashboard={() => setActiveTab('dashboard')}
-      />
+      <div className="h-screen flex flex-col items-center justify-center bg-gray-900 text-white gap-6">
+        <div className="w-16 h-16 border-4 border-orange-600 border-t-transparent rounded-full animate-spin"></div>
+        <p className="font-black uppercase tracking-widest text-sm animate-pulse">Sincronizando con la nube...</p>
+      </div>
     );
   }
 
   return (
     <div className="flex min-h-screen bg-gray-50 flex-col">
+      {/* Banner de aviso de modo local si no hay DB */}
+      {!dbConnected && !isLoading && (
+        <div className="bg-blue-600 text-white text-[10px] font-black uppercase py-2 px-4 flex justify-center gap-4 tracking-widest no-print">
+          <span>⚠️ MODO DEMO LOCAL ACTIVO</span>
+          <span className="opacity-60">-</span>
+          <span>Configura SUPABASE_URL y SUPABASE_ANON_KEY en Vercel para persistencia real</span>
+        </div>
+      )}
+
       <div className="flex flex-1">
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
         <main className="flex-1 p-8 overflow-y-auto">
@@ -203,16 +175,16 @@ const TPVMain: React.FC = () => {
               users={users}
               products={products}
               activeShift={activeShift}
-              securityEvents={securityEvents}
-              onStartShift={startShift}
-              onEndShift={endShift}
+              securityEvents={[]}
+              onStartShift={(base) => setActiveShift({ id: 's-'+Date.now(), startTime: new Date().toISOString(), initialBase: base, totalSales: 0, totalCard: 0, totalCashSales: 0, totalExpenses: 0, status: 'abierto', userId: activeUser.id })}
+              onEndShift={(finalCash) => setActiveShift(null)}
               onNavigateToSecurity={() => setActiveTab('security')}
               onQuickExpense={handleRegisterExpense}
             />
           )}
           {activeTab === 'tables' && (
             <TableManager 
-              tables={tables} logs={tableLogs}
+              tables={tables} logs={[]}
               onSelectTable={(t) => { setSelectedTable(t); setActiveTab('pos'); }} 
               onMoveTable={(f, t) => setTables(prev => prev.map(m => m.id === f ? { ...m, status: 'libre', currentOrder: [] } : m.id === t ? { ...m, status: 'ocupada' } : m))}
               onOpenTable={(id, name) => setTables(prev => prev.map(t => t.id === id ? { ...t, status: 'ocupada', tempName: name, currentOrder: [] } : t))} 
@@ -231,54 +203,32 @@ const TPVMain: React.FC = () => {
               onQuickExpense={handleRegisterExpense}
             />
           )}
-          {activeTab === 'sales_history' && (
-            <SalesHistory 
-              sales={sales} 
-              manualEntries={manualEntries} 
-              shiftHistory={shiftHistory} 
-              users={users} 
-              products={products}
-              onUpdateExpenseDocument={handleUpdateExpenseDocument}
-            />
-          )}
-          {activeTab === 'inventory' && <InventoryManager ingredients={ingredients} products={products} onUpdateRecipe={(id, r) => setProducts(p => p.map(pr => pr.id === id ? {...pr, recipe: r} : pr))} onUpdateIngredient={i => setIngredients(inG => inG.map(ig => ig.id === i.id ? i : ig))} onAddIngredient={i => setIngredients(prev => [...prev, i])} onAddProduct={p => setProducts(prev => [...prev, p])} />}
-          {activeTab === 'users' && <UserManager users={users} onUpdateUsers={setUsers} />}
-          {activeTab === 'waste' && <WasteManager products={products} activeUser={activeUser} onRegisterWaste={handleRegisterWaste} wasteHistory={wastes} />}
-          {activeTab === 'security' && <SecurityCamera onDetectedMismatch={(c, a) => setSecurityEvents(p => [...p, { id: Math.random().toString(), timestamp: new Date().toISOString(), cameraValue: c, appPaidValue: a, type: 'mismatch', videoRef: 'REC_AUTO' }])} />}
+          {activeTab === 'inventory' && <InventoryManager ingredients={ingredients} products={products} onUpdateRecipe={(id, r) => setProducts(p => p.map(pr => pr.id === id ? {...pr, recipe: r} : pr))} onUpdateIngredient={async i => { 
+              setIngredients(inG => inG.map(ig => ig.id === i.id ? i : ig));
+              if (dbConnected) await db.updateIngredient(i);
+            }} onAddIngredient={async i => {
+              setIngredients(prev => [...prev, i]);
+              if (dbConnected) await db.updateIngredient(i);
+            }} onAddProduct={p => setProducts(prev => [...prev, p])} />}
           {activeTab === 'analytics' && <AIAnalytics ingredients={ingredients} sales={sales} products={products} />}
           {activeTab === 'manual' && <UserManual onBack={() => setActiveTab('dashboard')} />}
         </main>
       </div>
       <footer className="bg-gray-900 text-gray-500 py-4 px-8 text-[10px] font-bold uppercase tracking-[0.2em] flex justify-between items-center border-t border-white/5 no-print">
-         <div>EWOLA GASTROSMART v2.6.0</div>
-         <div className="flex items-center gap-2">© 2025 EWOLA J21 TECH - MADRID</div>
+         <div>GASTROSMART {dbConnected ? 'CLOUD SYNC' : 'LOCAL MODE'} v3.0</div>
+         <div className="flex items-center gap-2">© 2025 EWOLA TECH</div>
       </footer>
     </div>
   );
 };
 
 const App: React.FC = () => {
-  const [globalManualEntries, setGlobalManualEntries] = useState<TaxEntry[]>([]);
-  const [globalSales, setGlobalSales] = useState<Sale[]>([]);
-
-  // Función para sincronizar entradas manuales desde cualquier parte
-  const handleAddTaxEntry = (entry: TaxEntry) => {
-    setGlobalManualEntries(prev => [...prev, entry]);
-  };
-
   return (
     <HashRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/admin" element={
-          <TenantAdmin 
-            sales={globalSales} 
-            manualEntries={globalManualEntries}
-            onAddTaxEntry={handleAddTaxEntry}
-          />
-        } />
+        <Route path="/admin" element={<TenantAdmin />} />
         <Route path="/tpv/:tenantId" element={<TPVMain />} />
-        <Route path="/portfolio" element={<div className="bg-white min-h-screen"><Portfolio /></div>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </HashRouter>
