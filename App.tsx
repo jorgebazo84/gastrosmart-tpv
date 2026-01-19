@@ -9,6 +9,10 @@ import LandingPage from './components/LandingPage';
 import TenantAdmin from './components/TenantAdmin';
 import Dashboard from './components/Dashboard';
 import UserManual from './components/UserManual';
+import SalesHistory from './components/SalesHistory';
+import UserManager from './components/UserManager';
+import WasteManager from './components/WasteManager';
+import SecurityCamera from './components/SecurityCamera';
 import { supabase, db } from './services/supabaseClient';
 import { AlertCircle, Terminal, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { 
@@ -27,7 +31,7 @@ const ConfigDiagnostics: React.FC<{ missingKeys: string[] }> = ({ missingKeys })
       </div>
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-black text-white uppercase tracking-tight">Configuración Incompleta</h2>
-        <p className="text-gray-400 text-sm">Tu aplicación en Vercel no tiene acceso a los servicios externos.</p>
+        <p className="text-gray-400 text-sm">Tu aplicación no tiene acceso a las variables de entorno.</p>
       </div>
       <div className="bg-black/50 rounded-2xl p-6 space-y-4 border border-gray-800">
         <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Faltan las siguientes variables:</p>
@@ -71,11 +75,11 @@ const TPVMain: React.FC = () => {
   const [activeUser, setActiveUser] = useState<User>(INITIAL_USERS[0]);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [manualEntries, setManualEntries] = useState<TaxEntry[]>([]);
+  const [wasteHistory, setWasteHistory] = useState<WasteEntry[]>([]);
+  const [activeShift, setActiveShift] = useState<Shift | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [dbConnected, setDbConnected] = useState(false);
   
-  const [activeShift, setActiveShift] = useState<Shift | null>(null);
-
   useEffect(() => {
     const loadCloudData = async () => {
       if (!supabase) {
@@ -85,17 +89,23 @@ const TPVMain: React.FC = () => {
       }
 
       try {
-        const [cloudIngs, cloudProds, cloudSales, cloudTax] = await Promise.all([
+        const [cloudIngs, cloudProds, cloudSales, cloudTax, cloudUsers, cloudWaste, cloudShift] = await Promise.all([
           db.getIngredients(),
           db.getProducts(),
           db.getSales(),
-          db.getTaxEntries()
+          db.getTaxEntries(),
+          db.getUsers(),
+          db.getWaste(),
+          db.getActiveShift()
         ]);
 
         if (cloudIngs) setIngredients(cloudIngs);
         if (cloudProds) setProducts(cloudProds);
         if (cloudSales) setSales(cloudSales);
         if (cloudTax) setManualEntries(cloudTax);
+        if (cloudUsers) setUsers(cloudUsers);
+        if (cloudWaste) setWasteHistory(cloudWaste);
+        if (cloudShift) setActiveShift(cloudShift);
         
         setDbConnected(true);
       } catch (error) {
@@ -113,10 +123,10 @@ const TPVMain: React.FC = () => {
     if (dbConnected) await db.saveTaxEntry(expense);
     
     if (activeShift && expense.isCashOut) {
-      setActiveShift(prev => prev ? {
-        ...prev,
-        totalExpenses: (prev.totalExpenses || 0) + expense.total
-      } : null);
+      const newTotalExpenses = (activeShift.totalExpenses || 0) + expense.total;
+      const updatedShift = { ...activeShift, totalExpenses: newTotalExpenses };
+      setActiveShift(updatedShift);
+      if (dbConnected) await db.saveShift(updatedShift);
     }
   };
 
@@ -131,6 +141,20 @@ const TPVMain: React.FC = () => {
     setSales(prev => [...prev, saleWithContext]);
     if (dbConnected) await db.saveSale(saleWithContext);
     
+    if (activeShift) {
+      const isCash = newSale.paymentMethod === 'Efectivo';
+      const isCard = newSale.paymentMethod === 'Tarjeta' || newSale.paymentMethod === 'Datáfono';
+      
+      const updatedShift: Shift = {
+        ...activeShift,
+        totalSales: (activeShift.totalSales || 0) + newSale.total,
+        totalCashSales: isCash ? (activeShift.totalCashSales || 0) + newSale.total : (activeShift.totalCashSales || 0),
+        totalCard: isCard ? (activeShift.totalCard || 0) + newSale.total : (activeShift.totalCard || 0)
+      };
+      setActiveShift(updatedShift);
+      if (dbConnected) await db.saveShift(updatedShift);
+    }
+
     const updatedIngredients = [...ingredients];
     for (const saleItem of newSale.items) {
       const product = products.find(p => p.id === saleItem.productId);
@@ -156,6 +180,35 @@ const TPVMain: React.FC = () => {
     setActiveTab('tables');
   };
 
+  const handleRegisterWaste = async (waste: WasteEntry) => {
+    setWasteHistory(prev => [...prev, waste]);
+    if (dbConnected) await db.saveWaste(waste);
+    
+    const product = products.find(p => p.id === waste.productId);
+    if (product) {
+      const updatedIngredients = [...ingredients];
+      for (const recipeItem of product.recipe) {
+        const ingIndex = updatedIngredients.findIndex(i => i.id === recipeItem.ingredientId);
+        if (ingIndex !== -1) {
+          const ing = updatedIngredients[ingIndex];
+          const newStock = ing.stock - (recipeItem.quantity * waste.quantity);
+          updatedIngredients[ingIndex] = { ...ing, stock: newStock };
+          if (dbConnected) await db.updateIngredient({ ...ing, stock: newStock });
+        }
+      }
+      setIngredients(updatedIngredients);
+    }
+  };
+
+  const missingKeys = [];
+  if (!process.env.API_KEY || process.env.API_KEY === '') missingKeys.push('API_KEY');
+  if (!process.env.SUPABASE_URL || process.env.SUPABASE_URL === '') missingKeys.push('SUPABASE_URL');
+  if (!process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY === '') missingKeys.push('SUPABASE_ANON_KEY');
+
+  if (missingKeys.length > 0 && !isLoading) {
+    return <ConfigDiagnostics missingKeys={missingKeys} />;
+  }
+
   if (isLoading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-gray-950 text-white gap-6">
@@ -163,16 +216,6 @@ const TPVMain: React.FC = () => {
         <p className="font-black uppercase tracking-widest text-sm animate-pulse">Sincronizando con la nube...</p>
       </div>
     );
-  }
-
-  // Verificación de configuración crítica
-  const missingKeys = [];
-  if (!process.env.API_KEY || process.env.API_KEY === '') missingKeys.push('API_KEY');
-  if (!process.env.SUPABASE_URL || process.env.SUPABASE_URL === '') missingKeys.push('SUPABASE_URL');
-  if (!process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY === '') missingKeys.push('SUPABASE_ANON_KEY');
-
-  if (missingKeys.length > 0) {
-    return <ConfigDiagnostics missingKeys={missingKeys} />;
   }
 
   return (
@@ -189,8 +232,28 @@ const TPVMain: React.FC = () => {
               products={products}
               activeShift={activeShift}
               securityEvents={[]}
-              onStartShift={(base) => setActiveShift({ id: 's-'+Date.now(), startTime: new Date().toISOString(), initialBase: base, totalSales: 0, totalCard: 0, totalCashSales: 0, totalExpenses: 0, status: 'abierto', userId: activeUser.id })}
-              onEndShift={(finalCash) => setActiveShift(null)}
+              onStartShift={async (base) => {
+                const newShift: Shift = { 
+                  id: 's-'+Date.now(), 
+                  startTime: new Date().toISOString(), 
+                  initialBase: base, 
+                  totalSales: 0, 
+                  totalCard: 0, 
+                  totalCashSales: 0, 
+                  totalExpenses: 0, 
+                  status: 'abierto', 
+                  userId: activeUser.id 
+                };
+                setActiveShift(newShift);
+                if (dbConnected) await db.saveShift(newShift);
+              }}
+              onEndShift={async (finalCash) => {
+                if (activeShift) {
+                  const closedShift = { ...activeShift, status: 'cerrado', endTime: new Date().toISOString(), finalCash: finalCash };
+                  setActiveShift(null);
+                  if (dbConnected) await db.saveShift(closedShift);
+                }
+              }}
               onNavigateToSecurity={() => setActiveTab('security')}
               onQuickExpense={handleRegisterExpense}
             />
@@ -216,14 +279,61 @@ const TPVMain: React.FC = () => {
               onQuickExpense={handleRegisterExpense}
             />
           )}
-          {activeTab === 'inventory' && <InventoryManager ingredients={ingredients} products={products} onUpdateRecipe={(id, r) => setProducts(p => p.map(pr => pr.id === id ? {...pr, recipe: r} : pr))} onUpdateIngredient={async i => { 
-              setIngredients(inG => inG.map(ig => ig.id === i.id ? i : ig));
-              if (dbConnected) await db.updateIngredient(i);
-            }} onAddIngredient={async i => {
-              setIngredients(prev => [...prev, i]);
-              if (dbConnected) await db.updateIngredient(i);
-            }} onAddProduct={p => setProducts(prev => [...prev, p])} />}
+          {activeTab === 'inventory' && (
+            <InventoryManager 
+              ingredients={ingredients} 
+              products={products} 
+              onUpdateRecipe={async (id, r) => {
+                const prod = products.find(p => p.id === id);
+                if (prod) {
+                  const updated = { ...prod, recipe: r };
+                  setProducts(p => p.map(pr => pr.id === id ? updated : pr));
+                  if (dbConnected) await db.updateProduct(updated);
+                }
+              }} 
+              onUpdateIngredient={async i => { 
+                setIngredients(inG => inG.map(ig => ig.id === i.id ? i : ig));
+                if (dbConnected) await db.updateIngredient(i);
+              }} 
+              onAddIngredient={async i => {
+                setIngredients(prev => [...prev, i]);
+                if (dbConnected) await db.updateIngredient(i);
+              }} 
+              onAddProduct={async p => {
+                setProducts(prev => [...prev, p]);
+                if (dbConnected) await db.updateProduct(p);
+              }} 
+            />
+          )}
+          {activeTab === 'sales_history' && (
+            <SalesHistory 
+              sales={sales} 
+              manualEntries={manualEntries} 
+              shiftHistory={[]} 
+              users={users} 
+              products={products}
+              onUpdateExpenseDocument={async (id, url) => {
+              }}
+            />
+          )}
+          {activeTab === 'users' && (
+            <UserManager 
+              users={users} 
+              onUpdateUsers={async (newUsers) => {
+                setUsers(newUsers);
+              }} 
+            />
+          )}
+          {activeTab === 'waste' && (
+            <WasteManager 
+              products={products} 
+              activeUser={activeUser} 
+              wasteHistory={wasteHistory}
+              onRegisterWaste={handleRegisterWaste}
+            />
+          )}
           {activeTab === 'analytics' && <AIAnalytics ingredients={ingredients} sales={sales} products={products} />}
+          {activeTab === 'security' && <SecurityCamera />}
           {activeTab === 'manual' && <UserManual onBack={() => setActiveTab('dashboard')} />}
         </main>
       </div>
