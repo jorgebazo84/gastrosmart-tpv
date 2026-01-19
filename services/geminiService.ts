@@ -8,7 +8,6 @@ export const getInventoryPredictions = async (
 ): Promise<PredictionResult[]> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey || apiKey === '' || apiKey === 'undefined') {
-    console.warn("Gemini API Key no configurada. Las predicciones automáticas están desactivadas.");
     return [];
   }
 
@@ -60,8 +59,12 @@ export const getInventoryPredictions = async (
     
     const text = response.text;
     return text ? JSON.parse(text) : [];
-  } catch (e) {
-    console.error("Error en predicción IA:", e);
+  } catch (e: any) {
+    if (e?.status === 503 || e?.message?.includes('503') || e?.message?.includes('overloaded')) {
+      console.warn("IA de Inventario: El servidor está sobrecargado. Se intentará en la próxima actualización.");
+    } else {
+      console.error("Error en predicción IA:", e);
+    }
     return [];
   }
 };
@@ -69,7 +72,6 @@ export const getInventoryPredictions = async (
 export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEntry>> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey || apiKey === '' || apiKey === 'undefined') {
-    console.warn("Gemini API Key no configurada. El escáner de facturas está desactivado.");
     return {};
   }
 
@@ -103,8 +105,12 @@ export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEn
     
     const text = response.text;
     return text ? JSON.parse(text) : {};
-  } catch (e) {
-    console.error("Error en análisis de ticket IA:", e);
+  } catch (e: any) {
+    if (e?.status === 503 || e?.message?.includes('503')) {
+      alert("El motor de IA está temporalmente sobrecargado. Por favor, reintenta el escaneo en unos segundos.");
+    } else {
+      console.error("Error en análisis de ticket IA:", e);
+    }
     return {};
   }
 };
