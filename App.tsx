@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, useParams, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
@@ -101,10 +102,10 @@ const TPVMain: React.FC = () => {
 
         if (cloudIngs) setIngredients(cloudIngs);
         if (cloudProds) setProducts(cloudProds);
-        if (cloudSales) setSales(cloudSales);
+        if (cloudSales) setSales(cloudSales || []);
         if (cloudTax) setManualEntries(cloudTax);
         if (cloudUsers) setUsers(cloudUsers);
-        if (cloudWaste) setWasteHistory(cloudWaste);
+        if (cloudWaste) setWasteHistory(cloudWaste || []);
         if (cloudShift) setActiveShift(cloudShift);
         
         setDbConnected(true);
@@ -131,6 +132,7 @@ const TPVMain: React.FC = () => {
   };
 
   const handleSaleComplete = async (newSale: Sale) => {
+    // 1. Preparar venta con ID de turno actual
     const saleWithContext = { 
       ...newSale, 
       tenantId: tenantId || 'demo', 
@@ -138,9 +140,10 @@ const TPVMain: React.FC = () => {
       shiftId: activeShift?.id
     };
     
+    // 2. Actualizar estado local
     setSales(prev => [...prev, saleWithContext]);
-    if (dbConnected) await db.saveSale(saleWithContext);
     
+    // 3. Actualizar turno antes de guardar la venta (para evitar error de FK)
     if (activeShift) {
       const isCash = newSale.paymentMethod === 'Efectivo';
       const isCard = newSale.paymentMethod === 'Tarjeta' || newSale.paymentMethod === 'Datáfono';
@@ -151,10 +154,19 @@ const TPVMain: React.FC = () => {
         totalCashSales: isCash ? (activeShift.totalCashSales || 0) + newSale.total : (activeShift.totalCashSales || 0),
         totalCard: isCard ? (activeShift.totalCard || 0) + newSale.total : (activeShift.totalCard || 0)
       };
+      
       setActiveShift(updatedShift);
-      if (dbConnected) await db.saveShift(updatedShift);
+      if (dbConnected) {
+        // Guardamos el turno primero para asegurar que el "esperado en caja" suba
+        await db.saveShift(updatedShift);
+        // Luego la venta
+        await db.saveSale(saleWithContext);
+      }
+    } else if (dbConnected) {
+      await db.saveSale(saleWithContext);
     }
 
+    // 4. Lógica de descuento de stock
     const updatedIngredients = [...ingredients];
     for (const saleItem of newSale.items) {
       const product = products.find(p => p.id === saleItem.productId);
@@ -249,7 +261,7 @@ const TPVMain: React.FC = () => {
               }}
               onEndShift={async (finalCash) => {
                 if (activeShift) {
-                  const closedShift = { ...activeShift, status: 'cerrado', endTime: new Date().toISOString(), finalCash: finalCash };
+                  const closedShift: Shift = { ...activeShift, status: 'cerrado', endTime: new Date().toISOString(), finalCash: finalCash };
                   setActiveShift(null);
                   if (dbConnected) await db.saveShift(closedShift);
                 }
