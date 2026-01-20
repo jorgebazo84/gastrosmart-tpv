@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { 
   LayoutDashboard, 
@@ -13,7 +12,8 @@ import {
   HelpCircle,
   ExternalLink,
   Users as UsersIcon,
-  History
+  History,
+  Truck
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -31,6 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'pos', label: 'Terminal Venta', icon: ShoppingCart },
     { id: 'sales_history', label: 'Registro Histórico', icon: History },
     { id: 'inventory', label: 'Stock Recetas', icon: Package },
+    { id: 'purchases', label: 'Compras Proveedor', icon: Truck },
     { id: 'users', label: 'Equipo y Personal', icon: UsersIcon },
     { id: 'waste', label: 'Control Merma', icon: Trash2 },
     { id: 'analytics', label: 'Inteligencia IA', icon: TrendingUp },
@@ -47,12 +48,12 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
         <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mt-1">Smart Coffee System</p>
       </div>
       
-      <nav className="flex-1 px-4 space-y-1">
+      <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">
         {menuItems.map((item) => (
           <button
             key={item.id}
             onClick={() => setActiveTab(item.id)}
-            className={`w-full flex items-center gap-3 px-6 py-4 rounded-2xl transition-all ${
+            className={`w-full flex items-center gap-3 px-6 py-3.5 rounded-2xl transition-all ${
               activeTab === item.id 
                 ? 'bg-orange-600 text-white shadow-lg shadow-orange-100 font-bold' 
                 : 'text-gray-400 hover:bg-gray-50'

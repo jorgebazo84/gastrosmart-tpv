@@ -1,17 +1,22 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Ingredient, Sale, PredictionResult, Product, TaxEntry } from "../types";
 
+// Función auxiliar para inicializar la IA de forma segura
+const getAIClient = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey === '' || apiKey === 'undefined' || apiKey.length < 10) {
+    return null;
+  }
+  return new GoogleGenAI({ apiKey });
+};
+
 export const getInventoryPredictions = async (
   ingredients: Ingredient[],
   sales: Sale[],
   products: Product[]
 ): Promise<PredictionResult[]> => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey || apiKey === '' || apiKey === 'undefined') {
-    return [];
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getAIClient();
+  if (!ai) return [];
 
   const context = {
     negocio: "Cafetería Local en España",
@@ -22,10 +27,10 @@ export const getInventoryPredictions = async (
       minimo_seguridad: i.minStock,
       unidad: i.unit 
     })),
-    historico_ventas_reciente: sales.map(s => ({ 
+    historico_ventas_reciente: sales.slice(0, 50).map(s => ({ 
       fecha: s.timestamp, 
       items: s.items,
-      metodo: s.paymentMethod 
+      total: s.total 
     })),
     maestro_recetas: products.map(p => ({ 
       nombre: p.name, 
@@ -36,9 +41,9 @@ export const getInventoryPredictions = async (
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Analiza este inventario y predice faltas: ${JSON.stringify(context)}`,
+      contents: `Analiza este inventario y predice faltas para una cafetería española: ${JSON.stringify(context)}`,
       config: {
-        systemInstruction: "Actúa como experto en logística de hostelería española. Devuelve JSON.",
+        systemInstruction: "Actúa como experto en logística de hostelería española. Devuelve un array JSON de predicciones.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -57,25 +62,16 @@ export const getInventoryPredictions = async (
       }
     });
     
-    const text = response.text;
-    return text ? JSON.parse(text) : [];
+    return response.text ? JSON.parse(response.text) : [];
   } catch (e: any) {
-    if (e?.status === 503 || e?.message?.includes('503') || e?.message?.includes('overloaded')) {
-      console.warn("IA de Inventario: El servidor está sobrecargado. Se intentará en la próxima actualización.");
-    } else {
-      console.error("Error en predicción IA:", e);
-    }
+    console.warn("IA de Inventario: Error o sobrecarga.", e.message);
     return [];
   }
 };
 
 export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEntry>> => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey || apiKey === '' || apiKey === 'undefined') {
-    return {};
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getAIClient();
+  if (!ai) return {};
 
   const imagePart = {
     inlineData: {
@@ -87,7 +83,7 @@ export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEn
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: { parts: [imagePart, { text: "Extrae: concepto, base, taxRate (decimal), total en JSON." }] },
+      contents: { parts: [imagePart, { text: "Extrae de este ticket de compra: concepto (proveedor), base imponible, taxRate (IVA decimal), total en JSON." }] },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -103,14 +99,9 @@ export const analyzeReceipt = async (base64Image: string): Promise<Partial<TaxEn
       }
     });
     
-    const text = response.text;
-    return text ? JSON.parse(text) : {};
+    return response.text ? JSON.parse(response.text) : {};
   } catch (e: any) {
-    if (e?.status === 503 || e?.message?.includes('503')) {
-      alert("El motor de IA está temporalmente sobrecargado. Por favor, reintenta el escaneo en unos segundos.");
-    } else {
-      console.error("Error en análisis de ticket IA:", e);
-    }
+    console.error("Error en análisis de ticket IA:", e);
     return {};
   }
 };

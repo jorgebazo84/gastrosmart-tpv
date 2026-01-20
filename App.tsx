@@ -1,10 +1,10 @@
-
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, useParams, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import POS from './components/POS';
 import TableManager from './components/TableManager';
 import InventoryManager from './components/InventoryManager';
+import PurchaseManager from './components/PurchaseManager';
 import AIAnalytics from './components/AIAnalytics';
 import LandingPage from './components/LandingPage';
 import TenantAdmin from './components/TenantAdmin';
@@ -51,7 +51,7 @@ const ConfigDiagnostics: React.FC<{ missingKeys: string[] }> = ({ missingKeys })
         <ol className="list-decimal list-inside space-y-1 opacity-80">
           <li>Ve al panel de Vercel</li>
           <li>Settings &gt; Environment Variables</li>
-          <li>Añade las llaves faltantes</li>
+          <li>Añade las llaves faltantes (SUPABASE_URL, etc)</li>
           <li>Haz un nuevo "Redeploy"</li>
         </ol>
       </div>
@@ -137,10 +137,25 @@ const TPVMain: React.FC = () => {
     }
   };
 
+  const handleAddStock = async (ingId: string, quantity: number, totalCost: number) => {
+    const ingIndex = ingredients.findIndex(i => i.id === ingId);
+    if (ingIndex !== -1) {
+      const ing = ingredients[ingIndex];
+      const newStock = ing.stock + quantity;
+      const newCostPerUnit = totalCost / quantity;
+      
+      const updatedIng = { ...ing, stock: newStock, costPerUnit: newCostPerUnit };
+      const newIngs = [...ingredients];
+      newIngs[ingIndex] = updatedIng;
+      setIngredients(newIngs);
+
+      if (dbConnected) await db.updateIngredient(updatedIng);
+    }
+  };
+
   const handleSaleComplete = async (newSale: Sale) => {
     if (!activeUser) return;
 
-    // 1. Preparar venta con ID de turno actual
     const saleWithContext = { 
       ...newSale, 
       tenantId: tenantId || 'demo', 
@@ -149,10 +164,8 @@ const TPVMain: React.FC = () => {
       sellerId: activeUser.id
     };
     
-    // 2. Actualizar estado local
     setSales(prev => [...prev, saleWithContext]);
     
-    // 3. Actualizar turno ANTES de guardar la venta para evitar error de FK y actualizar totales
     if (activeShift) {
       const isCash = newSale.paymentMethod === 'Efectivo';
       const isCard = newSale.paymentMethod === 'Tarjeta' || newSale.paymentMethod === 'Datáfono';
@@ -167,9 +180,7 @@ const TPVMain: React.FC = () => {
       setActiveShift(updatedShift);
       if (dbConnected) {
         try {
-          // Guardamos el turno primero (upsert) para que el "esperado en caja" se actualice en la DB
           await db.saveShift(updatedShift);
-          // Luego guardamos la venta
           await db.saveSale(saleWithContext);
         } catch (e) {
           console.error("Error sincronizando venta con nube:", e);
@@ -179,7 +190,6 @@ const TPVMain: React.FC = () => {
       await db.saveSale(saleWithContext);
     }
 
-    // 4. Lógica de descuento de stock
     const updatedIngredients = [...ingredients];
     for (const saleItem of newSale.items) {
       const product = products.find(p => p.id === saleItem.productId);
@@ -226,7 +236,6 @@ const TPVMain: React.FC = () => {
   };
 
   const missingKeys = [];
-  if (!process.env.API_KEY || process.env.API_KEY === '') missingKeys.push('API_KEY');
   if (!process.env.SUPABASE_URL || process.env.SUPABASE_URL === '') missingKeys.push('SUPABASE_URL');
   if (!process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY === '') missingKeys.push('SUPABASE_ANON_KEY');
 
@@ -328,6 +337,13 @@ const TPVMain: React.FC = () => {
                 setProducts(prev => [...prev, p]);
                 if (dbConnected) await db.updateProduct(p);
               }} 
+            />
+          )}
+          {activeTab === 'purchases' && (
+            <PurchaseManager 
+              ingredients={ingredients}
+              onAddStock={handleAddStock}
+              onRegisterExpense={handleRegisterExpense}
             />
           )}
           {activeTab === 'sales_history' && (

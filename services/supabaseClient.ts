@@ -8,22 +8,37 @@ export const supabase = (supabaseUrl && supabaseUrl.startsWith('http'))
   ? createClient(supabaseUrl, supabaseAnonKey) 
   : null;
 
-// Mapeadores para asegurar que el código no rompa por mayúsculas/minúsculas
+/**
+ * Mapeador CamelCase -> snake_case
+ * Convierte { amountPaid: 10 } en { amount_paid: 10 }
+ */
 const mapToDB = (obj: any) => {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
   const mapped: any = {};
   for (const key in obj) {
-    const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
-    mapped[snakeKey] = obj[key];
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      // Reemplaza mayúsculas por _minúscula
+      const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      mapped[snakeKey] = obj[key];
+    }
   }
   return mapped;
 };
 
+/**
+ * Mapeador snake_case -> CamelCase
+ * Convierte { amount_paid: 10 } en { amountPaid: 10 }
+ */
 const mapFromDB = (obj: any) => {
-  if (!obj) return null;
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
   const mapped: any = {};
   for (const key in obj) {
-    const camelKey = key.replace(/([-_][a-z])/g, group => group.toUpperCase().replace('-', '').replace('_', ''));
-    mapped[camelKey] = obj[key];
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const camelKey = key.replace(/([-_][a-z])/g, group => 
+        group.toUpperCase().replace('-', '').replace('_', '')
+      );
+      mapped[camelKey] = obj[key];
+    }
   }
   return mapped;
 };
@@ -68,8 +83,13 @@ export const db = {
   // Ventas
   async saveSale(sale: any) {
     if (!supabase) return;
-    const { error } = await supabase.from('sales').insert(mapToDB(sale));
-    if (error) console.error("Error saving sale:", error);
+    // Forzamos el mapeo antes de insertar para evitar PGRST204
+    const dbSale = mapToDB(sale);
+    const { error } = await supabase.from('sales').insert(dbSale);
+    if (error) {
+      console.error("Supabase Sale Error:", error);
+      throw error;
+    }
   },
   async getSales() {
     if (!supabase) return null;
@@ -111,7 +131,11 @@ export const db = {
   },
   async saveShift(shift: any) {
     if (!supabase) return;
-    const { error } = await supabase.from('shifts').upsert(mapToDB(shift));
-    if (error) console.error("Error saving shift:", error);
+    const dbShift = mapToDB(shift);
+    const { error } = await supabase.from('shifts').upsert(dbShift);
+    if (error) {
+      console.error("Supabase Shift Error:", error);
+      throw error;
+    }
   }
 };
