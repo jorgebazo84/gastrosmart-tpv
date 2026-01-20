@@ -72,8 +72,8 @@ const TPVMain: React.FC = () => {
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [sales, setSales] = useState<Sale[]>([]);
   const [tables, setTables] = useState<Table[]>(INITIAL_TABLES);
-  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
-  const [activeUser, setActiveUser] = useState<User>(INITIAL_USERS[0]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [activeUser, setActiveUser] = useState<User | null>(null);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [manualEntries, setManualEntries] = useState<TaxEntry[]>([]);
   const [wasteHistory, setWasteHistory] = useState<WasteEntry[]>([]);
@@ -100,11 +100,17 @@ const TPVMain: React.FC = () => {
           db.getActiveShift()
         ]);
 
-        if (cloudIngs) setIngredients(cloudIngs);
-        if (cloudProds) setProducts(cloudProds);
+        if (cloudIngs && cloudIngs.length > 0) setIngredients(cloudIngs);
+        if (cloudProds && cloudProds.length > 0) setProducts(cloudProds);
         if (cloudSales) setSales(cloudSales || []);
         if (cloudTax) setManualEntries(cloudTax);
-        if (cloudUsers) setUsers(cloudUsers);
+        if (cloudUsers && cloudUsers.length > 0) {
+          setUsers(cloudUsers);
+          setActiveUser(cloudUsers[0]);
+        } else {
+          setUsers(INITIAL_USERS);
+          setActiveUser(INITIAL_USERS[0]);
+        }
         if (cloudWaste) setWasteHistory(cloudWaste || []);
         if (cloudShift) setActiveShift(cloudShift);
         
@@ -132,18 +138,21 @@ const TPVMain: React.FC = () => {
   };
 
   const handleSaleComplete = async (newSale: Sale) => {
+    if (!activeUser) return;
+
     // 1. Preparar venta con ID de turno actual
     const saleWithContext = { 
       ...newSale, 
       tenantId: tenantId || 'demo', 
       timestamp: new Date().toISOString(),
-      shiftId: activeShift?.id
+      shiftId: activeShift?.id,
+      sellerId: activeUser.id
     };
     
     // 2. Actualizar estado local
     setSales(prev => [...prev, saleWithContext]);
     
-    // 3. Actualizar turno antes de guardar la venta (para evitar error de FK)
+    // 3. Actualizar turno ANTES de guardar la venta para evitar error de FK y actualizar totales
     if (activeShift) {
       const isCash = newSale.paymentMethod === 'Efectivo';
       const isCard = newSale.paymentMethod === 'Tarjeta' || newSale.paymentMethod === 'Datáfono';
@@ -157,10 +166,14 @@ const TPVMain: React.FC = () => {
       
       setActiveShift(updatedShift);
       if (dbConnected) {
-        // Guardamos el turno primero para asegurar que el "esperado en caja" suba
-        await db.saveShift(updatedShift);
-        // Luego la venta
-        await db.saveSale(saleWithContext);
+        try {
+          // Guardamos el turno primero (upsert) para que el "esperado en caja" se actualice en la DB
+          await db.saveShift(updatedShift);
+          // Luego guardamos la venta
+          await db.saveSale(saleWithContext);
+        } catch (e) {
+          console.error("Error sincronizando venta con nube:", e);
+        }
       }
     } else if (dbConnected) {
       await db.saveSale(saleWithContext);
@@ -254,7 +267,7 @@ const TPVMain: React.FC = () => {
                   totalCashSales: 0, 
                   totalExpenses: 0, 
                   status: 'abierto', 
-                  userId: activeUser.id 
+                  userId: activeUser?.id || 'u1' 
                 };
                 setActiveShift(newShift);
                 if (dbConnected) await db.saveShift(newShift);
@@ -280,7 +293,7 @@ const TPVMain: React.FC = () => {
               isShiftOpen={!!activeShift}
             />
           )}
-          {activeTab === 'pos' && (
+          {activeTab === 'pos' && activeUser && (
             <POS 
               selectedTable={selectedTable} activeUser={activeUser} users={users} onUserChange={setActiveUser}
               onSaleComplete={handleSaleComplete} onSaveOrder={(id, c) => setTables(prev => prev.map(t => t.id === id ? { ...t, currentOrder: c } : t))}
@@ -336,7 +349,7 @@ const TPVMain: React.FC = () => {
               }} 
             />
           )}
-          {activeTab === 'waste' && (
+          {activeTab === 'waste' && activeUser && (
             <WasteManager 
               products={products} 
               activeUser={activeUser} 
